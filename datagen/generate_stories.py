@@ -35,7 +35,8 @@ Examples:
   python generate_stories.py --backend anthropic-batch --model claude-haiku-5-5 --n_requests 100000
 
 Output: JSONL, one story per line:
-  {"req_id": 17, "model": ..., "genre": ..., "audience": ..., "words": [...], "features": [...], "text": ...}
+  {"req_id": 17, "model": ..., "genre": ..., "audience": ..., "features": [...], "ending": ... | null,
+   "words": [...], "text": ...}
 """
 import argparse
 import functools
@@ -67,6 +68,8 @@ class PromptData:
     genres: tuple
     audiences: tuple
     features: tuple
+    endings: tuple             # mutually exclusive: at most one per request
+    ending_probability: float  # share of requests that get an ending instruction
     nouns: tuple       # nominative singular (or plural-only nouns)
     verbs: tuple       # infinitives; the model inflects all words as needed
     adjectives: tuple  # masculine nominative
@@ -77,12 +80,15 @@ def load_prompt_data(path: str) -> PromptData:
     """Load and validate the prompt data file; raises ValueError on a malformed file."""
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
-    list_fields = ["genres", "audiences", "features", "nouns", "verbs", "adjectives"]
-    expected = {"system", *list_fields}
+    list_fields = ["genres", "audiences", "features", "endings", "nouns", "verbs", "adjectives"]
+    expected = {"system", "ending_probability", *list_fields}
     if raw.keys() != expected:
         raise ValueError(f"{path}: expected keys {sorted(expected)}, got {sorted(raw)}")
     if not isinstance(raw["system"], str) or not raw["system"].strip():
         raise ValueError(f"{path}: 'system' must be a non-empty string")
+    p_end = raw["ending_probability"]
+    if isinstance(p_end, bool) or not isinstance(p_end, (int, float)) or not 0 <= p_end <= 1:
+        raise ValueError(f"{path}: 'ending_probability' must be a number in [0, 1]")
     lists = {}
     for name in list_fields:
         items = raw[name]
@@ -98,7 +104,7 @@ def load_prompt_data(path: str) -> PromptData:
     if russian:
         raise ValueError(f"{path}: non-Ukrainian letters in {russian}")
     canonical = json.dumps(raw, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    return PromptData(system=raw["system"], **lists,
+    return PromptData(system=raw["system"], ending_probability=float(p_end), **lists,
                       fingerprint=hashlib.sha256(canonical).hexdigest()[:12])
 
 
@@ -139,6 +145,7 @@ def make_request(data: PromptData, req_id: int, seed: int, stories_per_request: 
     genre = rng.choice(data.genres)
     audience = rng.choice(data.audiences)
     features = rng.sample(data.features, rng.choice([1, 1, 2]))
+    ending = rng.choice(data.endings) if rng.random() < data.ending_probability else None
     stories = [[rng.choice(data.nouns), rng.choice(data.verbs), rng.choice(data.adjectives)]
                for _ in range(stories_per_request)]
 
@@ -153,13 +160,14 @@ def make_request(data: PromptData, req_id: int, seed: int, stories_per_request: 
 Вимоги:
 - Використовуй лише прості слова та короткі речення, зрозумілі читачеві.
 - Кожен текст — 120–250 слів, з різними персонажами й сюжетами.
-- {" ".join(features)}
+- {" ".join(features + [ending] if ending else features)}
 - Кожен текст має природно містити свої три слова (у будь-якій граматичній формі):
 {words_lines}
 
 {FORMAT_JSON if json_mode else FORMAT_SEPARATOR}"""
     return {"req_id": req_id, "genre": genre, "audience": audience,
-            "features": features, "stories": stories, "system": data.system, "prompt": prompt}
+            "features": features, "ending": ending, "stories": stories,
+            "system": data.system, "prompt": prompt}
 
 
 # leaked headers like "Текст 2", or a short title line ("Сніг, що сяяв") before the text
@@ -179,7 +187,7 @@ def split_stories(spec: dict, text: str, model: str) -> list:
         words = spec["stories"][i] if i < len(spec["stories"]) else []
         out.append({"req_id": spec["req_id"], "model": model, "genre": spec["genre"],
                     "audience": spec["audience"], "features": spec["features"],
-                    "words": words, "text": p})
+                    "ending": spec["ending"], "words": words, "text": p})
     return out
 
 
