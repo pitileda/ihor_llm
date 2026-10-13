@@ -4,6 +4,7 @@ Generate a synthetic Ukrainian "TinyStories"-style dataset with an LLM.
 Variety comes from randomizing every request (TinyStories recipe): each story gets
 3 random words (noun, verb, adjective) it must use, plus a random genre, audience
 and 1-2 narrative features. Several stories are generated per request to save cost.
+The system prompt and all these lists are in story_prompts.json (--prompt_data).
 
 Backends:
   anthropic-batch  Claude Message Batches API (50% cheaper, async, usually < 1 h)
@@ -37,6 +38,8 @@ Output: JSONL, one story per line:
   {"req_id": 17, "model": ..., "genre": ..., "audience": ..., "words": [...], "features": [...], "text": ...}
 """
 import argparse
+import functools
+import hashlib
 import json
 import os
 import random
@@ -44,75 +47,60 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------------------
-# Vocabulary for prompt randomization. ~130 x 75 x 75 = ~700k word triples.
-# Verbs are infinitives, the model inflects all words as needed.
+# Prompt data: system prompt, genres, audiences, features and the word lists live in
+# story_prompts.json, so they can be edited without touching the code.
 
-NOUNS = """
-кошеня цуценя їжачок зайчик лисиця ведмедик білка сова жабка метелик бджола мурашка
-равлик качка курча корова кінь коза мишка пташка рибка черепаха слон жирафа мавпа
-дракон бабуся дідусь мама тато сестричка братик друг подруга вчителька лікар пекар
-садівник рибалка пожежник м'яч лялька машинка кубики кулька книжка олівець малюнок
-ліхтарик парасолька капелюх шарф рукавички черевики ковдра подушка ліжко вікно двері
-сходи дах сад город ліс поле річка озеро море гора печера міст дорога стежка село
-місто парк гойдалка пісочниця школа магазин ринок кухня торт пиріжок яблуко груша
-вишня суниця морква гарбуз хліб молоко мед каша суп сонце місяць зірка хмара дощ
-сніг вітер веселка грім калюжа листок квітка соняшник дерево гриб жолудь камінчик
-мушля скриня ключ карта човен потяг літак велосипед санчата ракета годинник дзвіночок
-свічка подарунок лист пісня гра свято сон таємниця
-""".split()
+DEFAULT_PROMPT_DATA = os.path.join(HERE, "story_prompts.json")
 
-VERBS = """
-бігати стрибати літати плавати співати танцювати малювати читати писати рахувати
-будувати копати садити поливати готувати пекти їсти пити спати прокидатися шукати
-знайти загубити ховатися грати допомагати ділитися дарувати обіймати сміятися плакати
-боятися мріяти чекати слухати дивитися рости лагодити прибирати мити одягатися гуляти
-подорожувати лізти падати ловити кидати нести тягнути штовхати відкривати закривати
-рятувати захищати вибачатися дякувати пробачити навчитися розповідати питати
-відповідати кликати світити сяяти шепотіти кричати тремтіти ковзати кататися будити
-збирати
-""".split()
+# Ukrainian never uses these letters; their presence means Russian text slipped in.
+RUSSIAN_LETTERS = re.compile(r"[ыэъёЫЭЪЁ]")
 
-ADJECTIVES = """
-маленький великий веселий сумний сміливий боязкий добрий хитрий лінивий працьовитий
-швидкий повільний теплий холодний мокрий сухий м'який твердий блискучий яскравий
-темний світлий червоний жовтий зелений синій білий чорний рудий золотий срібний
-пухнастий колючий солодкий кислий смачний гарячий тихий гучний дивний чарівний старий
-новий високий низький довгий короткий круглий важкий легкий чистий брудний голодний
-сонний щасливий сердитий цікавий загублений зламаний улюблений таємничий крихітний
-величезний ввічливий слухняний неслухняний розумний кмітливий дружній самотній щедрий
-жадібний уважний гордий ніжний смішний
-""".split()
 
-GENRES = [
-    "казка",
-    "оповідання з повсякденного життя дитини",
-    "байка про тварин",
-    "коротка розповідь від першої особи",
-    "лист другові або бабусі",
-    "опис природи, пори року або місця",
-    "сценка-діалог між персонажами",
-    "пояснення для дитини, як або чому щось відбувається у світі",
-]
+@dataclass(frozen=True)
+class PromptData:
+    system: str
+    genres: tuple
+    audiences: tuple
+    features: tuple
+    nouns: tuple       # nominative singular (or plural-only nouns)
+    verbs: tuple       # infinitives; the model inflects all words as needed
+    adjectives: tuple  # masculine nominative
+    fingerprint: str   # hash of the file content: tells prompt versions apart
 
-AUDIENCES = ["дитина 3–5 років", "дитина 6–8 років"]
 
-FEATURES = [
-    "У тексті має бути діалог: персонажі розмовляють, пряма мова оформлена через тире.",
-    "У сюжеті має бути несподіваний поворот.",
-    "Текст має закінчуватися мораллю або уроком.",
-    "Історія має сумний або гіркуватий кінець.",
-    "У сюжеті має бути конфлікт, який персонажі розв'язують.",
-    "Використай повтор, як у народних казках: щось трапляється тричі.",
-]
+def load_prompt_data(path: str) -> PromptData:
+    """Load and validate the prompt data file; raises ValueError on a malformed file."""
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    list_fields = ["genres", "audiences", "features", "nouns", "verbs", "adjectives"]
+    expected = {"system", *list_fields}
+    if raw.keys() != expected:
+        raise ValueError(f"{path}: expected keys {sorted(expected)}, got {sorted(raw)}")
+    if not isinstance(raw["system"], str) or not raw["system"].strip():
+        raise ValueError(f"{path}: 'system' must be a non-empty string")
+    lists = {}
+    for name in list_fields:
+        items = raw[name]
+        if not isinstance(items, list) or not items:
+            raise ValueError(f"{path}: '{name}' must be a non-empty list")
+        if not all(isinstance(x, str) and x.strip() for x in items):
+            raise ValueError(f"{path}: '{name}' must contain only non-empty strings")
+        dups = sorted({x for x in items if items.count(x) > 1})
+        if dups:
+            raise ValueError(f"{path}: duplicates in '{name}': {dups}")
+        lists[name] = tuple(items)
+    russian = [x for x in (raw["system"], *sum(lists.values(), ())) if RUSSIAN_LETTERS.search(x)]
+    if russian:
+        raise ValueError(f"{path}: non-Ukrainian letters in {russian}")
+    canonical = json.dumps(raw, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return PromptData(system=raw["system"], **lists,
+                      fingerprint=hashlib.sha256(canonical).hexdigest()[:12])
 
-SYSTEM = (
-    "Ти — досвідчений український дитячий письменник. "
-    "Пишеш грамотною літературною українською мовою, без русизмів і суржику."
-)
 
 SEPARATOR = "==="
 
@@ -144,13 +132,14 @@ STORIES_SCHEMA = {
 }
 
 
-def make_request(req_id: int, seed: int, stories_per_request: int, json_mode: bool = False) -> dict:
-    """Deterministic random spec for one request: same req_id -> same prompt."""
+def make_request(data: PromptData, req_id: int, seed: int, stories_per_request: int,
+                 json_mode: bool = False) -> dict:
+    """Deterministic random spec for one request: same data + req_id -> same prompt."""
     rng = random.Random(seed * 1_000_003 + req_id)
-    genre = rng.choice(GENRES)
-    audience = rng.choice(AUDIENCES)
-    features = rng.sample(FEATURES, rng.choice([1, 1, 2]))
-    stories = [[rng.choice(NOUNS), rng.choice(VERBS), rng.choice(ADJECTIVES)]
+    genre = rng.choice(data.genres)
+    audience = rng.choice(data.audiences)
+    features = rng.sample(data.features, rng.choice([1, 1, 2]))
+    stories = [[rng.choice(data.nouns), rng.choice(data.verbs), rng.choice(data.adjectives)]
                for _ in range(stories_per_request)]
 
     words_lines = "\n".join(
@@ -170,11 +159,7 @@ def make_request(req_id: int, seed: int, stories_per_request: int, json_mode: bo
 
 {FORMAT_JSON if json_mode else FORMAT_SEPARATOR}"""
     return {"req_id": req_id, "genre": genre, "audience": audience,
-            "features": features, "stories": stories, "prompt": prompt}
-
-
-# Ukrainian never uses these letters; their presence means Russian text slipped in.
-RUSSIAN_LETTERS = re.compile(r"[ыэъёЫЭЪЁ]")
+            "features": features, "stories": stories, "system": data.system, "prompt": prompt}
 
 
 # leaked headers like "Текст 2", or a short title line ("Сніг, що сяяв") before the text
@@ -199,12 +184,57 @@ def split_stories(spec: dict, text: str, model: str) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Batch bookkeeping shared by both batch backends
+
+class BatchState:
+    """Submitted batches, persisted in <out>.batches.json so an interrupted run resumes.
+
+    Results are matched back to prompts by req_id, so a batch must be collected with
+    the same prompt data it was submitted with: if the data file changed while a
+    batch is still uncollected, refuse to run instead of mislabeling its stories.
+    """
+
+    def __init__(self, path: str, fingerprint: str):
+        self.path = path
+        self.fingerprint = fingerprint
+        self.batches = []
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                self.batches = json.load(f)["batches"]
+        stale = [b["id"] for b in self.pending() if b.get("prompt_data", fingerprint) != fingerprint]
+        if stale:
+            raise ValueError(f"batches {stale} were submitted with other prompt data; "
+                             f"restore that version of the file to collect them")
+
+    def pending(self) -> list:
+        return [b for b in self.batches if not b["collected"]]
+
+    def in_flight(self) -> set:
+        return {rid for b in self.pending() for rid in b["req_ids"]}
+
+    def add(self, batch_id: str, req_ids: list):
+        self.batches.append({"id": batch_id, "req_ids": req_ids, "collected": False,
+                             "prompt_data": self.fingerprint})
+        self.save()
+
+    def mark_collected(self, batch: dict):
+        batch["collected"] = True
+        self.save()
+
+    def save(self):
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"batches": self.batches}, f, indent=1)
+        os.replace(tmp, self.path)  # atomic: a crash never leaves a half-written state file
+
+
+# ---------------------------------------------------------------------------
 # Claude
 
-def claude_params(model: str, prompt: str, max_tokens: int) -> dict:
+def claude_params(model: str, spec: dict, max_tokens: int) -> dict:
     """Short creative writing needs no deep reasoning: minimize thinking tokens."""
-    params = {"model": model, "max_tokens": max_tokens, "system": SYSTEM,
-              "messages": [{"role": "user", "content": prompt}],
+    params = {"model": model, "max_tokens": max_tokens, "system": spec["system"],
+              "messages": [{"role": "user", "content": spec["prompt"]}],
               "output_config": {"effort": "low"}}
     if model.startswith("claude-haiku-5"):
         params["thinking"] = {"type": "disabled"}
@@ -223,7 +253,7 @@ def run_anthropic(specs, args, sink, stats):
     client = anthropic.Anthropic()
 
     def call(spec):
-        msg = client.messages.create(**claude_params(args.model, spec["prompt"], args.max_tokens))
+        msg = client.messages.create(**claude_params(args.model, spec, args.max_tokens))
         return spec, msg
 
     with ThreadPoolExecutor(args.workers) as pool:
@@ -243,40 +273,29 @@ def run_anthropic(specs, args, sink, stats):
             sink(split_stories(spec, message_text(msg), args.model))
 
 
-def run_anthropic_batch(specs, args, sink, stats):
+def run_anthropic_batch(specs, args, sink, stats, state: BatchState):
     import anthropic
     from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
     from anthropic.types.messages.batch_create_params import Request
 
     client = anthropic.Anthropic()
-    state_path = args.out + ".batches.json"
-    state = json.load(open(state_path)) if os.path.exists(state_path) else {"batches": []}
-
-    def save_state():
-        with open(state_path, "w") as f:
-            json.dump(state, f, indent=1)
-
     # submit requests not waiting in an uncollected batch; requests that failed in an
     # already collected batch have no output lines, so a rerun resubmits them
-    in_flight = {rid for b in state["batches"] if not b["collected"] for rid in b["req_ids"]}
+    in_flight = state.in_flight()
     todo = [s for s in specs if s["req_id"] not in in_flight]
     for i in range(0, len(todo), args.batch_size):
         chunk = todo[i:i + args.batch_size]
         batch = client.messages.batches.create(requests=[
             Request(custom_id=f"r{s['req_id']}",
                     params=MessageCreateParamsNonStreaming(
-                        **claude_params(args.model, s["prompt"], args.max_tokens)))
+                        **claude_params(args.model, s, args.max_tokens)))
             for s in chunk
         ])
-        state["batches"].append({"id": batch.id, "req_ids": [s["req_id"] for s in chunk],
-                                 "collected": False})
-        save_state()
+        state.add(batch.id, [s["req_id"] for s in chunk])
         print(f"submitted batch {batch.id} with {len(chunk)} requests")
 
     spec_by_id = {s["req_id"]: s for s in specs}
-    for b in state["batches"]:
-        if b["collected"]:
-            continue
+    for b in state.pending():
         while True:
             batch = client.messages.batches.retrieve(b["id"])
             if batch.processing_status == "ended":
@@ -296,8 +315,7 @@ def run_anthropic_batch(specs, args, sink, stats):
                 stats["failed"] += 1
                 continue
             sink(split_stories(spec_by_id[rid], message_text(msg), args.model))
-        b["collected"] = True
-        save_state()
+        state.mark_collected(b)
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +323,7 @@ def run_anthropic_batch(specs, args, sink, stats):
 
 def openai_body(spec, args, extra):
     body = {"model": args.model, "max_tokens": args.max_tokens, "temperature": 1.0,
-            "messages": [{"role": "system", "content": SYSTEM},
+            "messages": [{"role": "system", "content": spec["system"]},
                          {"role": "user", "content": spec["prompt"]}], **extra}
     # OpenAI reasoning models reject max_tokens/temperature; pass
     # --extra_body '{"max_completion_tokens": 8000}' for them
@@ -362,23 +380,17 @@ def run_openai(specs, args, sink, stats):
             handle_openai_response(spec, resp, args, sink, stats)
 
 
-def run_openai_batch(specs, args, sink, stats):
+def run_openai_batch(specs, args, sink, stats, state: BatchState):
     """OpenAI Batch API: upload a JSONL file of requests, poll, download results."""
     session = openai_session()
     base = args.base_url.rstrip("/")
     extra = json.loads(args.extra_body) if args.extra_body else {}
-    state_path = args.out + ".batches.json"
-    state = json.load(open(state_path)) if os.path.exists(state_path) else {"batches": []}
-
-    def save_state():
-        with open(state_path, "w") as f:
-            json.dump(state, f, indent=1)
 
     def ok(r):
         r.raise_for_status()
         return r
 
-    in_flight = {rid for b in state["batches"] if not b["collected"] for rid in b["req_ids"]}
+    in_flight = state.in_flight()
     todo = [s for s in specs if s["req_id"] not in in_flight]
     batch_size = min(args.batch_size, 50_000)  # OpenAI limit per batch
     for i in range(0, len(todo), batch_size):
@@ -392,15 +404,11 @@ def run_openai_batch(specs, args, sink, stats):
         batch = ok(session.post(f"{base}/batches", json={
             "input_file_id": f["id"], "endpoint": "/v1/chat/completions",
             "completion_window": "24h"})).json()
-        state["batches"].append({"id": batch["id"], "req_ids": [s["req_id"] for s in chunk],
-                                 "collected": False})
-        save_state()
+        state.add(batch["id"], [s["req_id"] for s in chunk])
         print(f"submitted batch {batch['id']} with {len(chunk)} requests")
 
     spec_by_id = {s["req_id"]: s for s in specs}
-    for b in state["batches"]:
-        if b["collected"]:
-            continue
+    for b in state.pending():
         while True:
             try:
                 batch = ok(session.get(f"{base}/batches/{b['id']}")).json()
@@ -431,8 +439,7 @@ def run_openai_batch(specs, args, sink, stats):
                     stats["failed"] += 1
                     continue
                 handle_openai_response(spec_by_id[rid], resp["body"], args, sink, stats)
-        b["collected"] = True
-        save_state()
+        state.mark_collected(b)
 
 
 # ---------------------------------------------------------------------------
@@ -453,20 +460,39 @@ def main():
     p.add_argument("--extra_body", default="", help="openai backend: JSON merged into the request")
     p.add_argument("--price_in", type=float, help="$ per 1M input tokens, standard rate (openai backends)")
     p.add_argument("--price_out", type=float, help="$ per 1M output tokens, standard rate (openai backends)")
+    p.add_argument("--prompt_data", default=DEFAULT_PROMPT_DATA,
+                   help="JSON with the system prompt, genres, audiences, features and word lists")
     p.add_argument("--out", default=os.path.join(HERE, "stories", "stories.jsonl"))
     p.add_argument("--dry_run", action="store_true", help="print one prompt and exit")
     args = p.parse_args()
 
+    try:
+        data = load_prompt_data(args.prompt_data)
+    except (OSError, ValueError) as e:  # JSONDecodeError is a ValueError
+        sys.exit(f"bad prompt data: {e}")
+    print(f"prompt data {args.prompt_data} ({data.fingerprint}): {len(data.nouns)} nouns, "
+          f"{len(data.verbs)} verbs, {len(data.adjectives)} adjectives")
+
     if args.dry_run:
-        print(make_request(0, args.seed, args.stories_per_request, args.json)["prompt"])
+        print(make_request(data, 0, args.seed, args.stories_per_request, args.json)["prompt"])
         return
+
+    runners = {"anthropic": run_anthropic, "anthropic-batch": run_anthropic_batch,
+               "openai": run_openai, "openai-batch": run_openai_batch}
+    run = runners[args.backend]
+    if args.backend.endswith("-batch"):
+        try:
+            state = BatchState(args.out + ".batches.json", data.fingerprint)
+        except ValueError as e:
+            sys.exit(str(e))
+        run = functools.partial(run, state=state)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     done = set()
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as f:
             done = {json.loads(line)["req_id"] for line in f}
-    specs = [make_request(i, args.seed, args.stories_per_request, args.json)
+    specs = [make_request(data, i, args.seed, args.stories_per_request, args.json)
              for i in range(args.n_requests) if i not in done]
     print(f"{len(done)} requests already done, {len(specs)} to go")
 
@@ -482,8 +508,7 @@ def main():
 
     t0 = time.time()
     try:
-        {"anthropic": run_anthropic, "anthropic-batch": run_anthropic_batch,
-         "openai": run_openai, "openai-batch": run_openai_batch}[args.backend](specs, args, sink, stats)
+        run(specs, args, sink, stats)
     finally:
         out_f.close()
         report(args, stats, time.time() - t0)
