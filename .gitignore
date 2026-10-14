@@ -10,3 +10,6 @@ data/*/corpus.txt
 # generated tokenizers (retrained by prepare.py / train_tokenizer.py)
 tokenizer/*.model
 tokenizer/*.vocab
+
+# run logs anywhere in the repo
+*.log

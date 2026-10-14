@@ -31,24 +31,40 @@ sys.path.insert(0, os.path.join(ROOT, "tokenizer"))
 from train_tokenizer import clean, show_stats, train_bpe  # noqa: E402
 
 
+# generator artifacts that stand for a line break: HTML <br> and a literal backslash-n
+LINE_BREAK_ARTIFACTS = re.compile(r"<br\s*/?>|\\n", re.I)
+# after those are fixed, any of these means a broken story: Latin letters (English
+# phrases, Latin look-alikes inside Cyrillic words like "совa") or markup leftovers
+FOREIGN = re.compile(r"[A-Za-z\\<>]")
+
+
+def normalize(text):
+    text = clean(LINE_BREAK_ARTIFACTS.sub("\n", text)).strip()
+    # one "\n" per paragraph break: blank lines carry no extra meaning
+    return re.sub(r"[ \t]*\n\s*", "\n", text)
+
+
 def load_stories(patterns):
     files = sorted({f for p in patterns for f in glob.glob(p)})
     if not files:
         sys.exit(f"no files match {patterns}")
     seen, stories = set(), []
     for path in files:
-        n_file = 0
+        n_kept = n_dup = n_foreign = 0
         with open(path, encoding="utf-8") as f:
             for line in f:
-                text = clean(json.loads(line)["text"]).strip()
-                # one "\n" per paragraph break: blank lines carry no extra meaning
-                text = re.sub(r"[ \t]*\n\s*", "\n", text)
+                text = normalize(json.loads(line)["text"])
+                if FOREIGN.search(text):
+                    n_foreign += 1
+                    continue
                 if text in seen:
+                    n_dup += 1
                     continue
                 seen.add(text)
                 stories.append(text)
-                n_file += 1
-        print(f"{path}: {n_file} stories")
+                n_kept += 1
+        print(f"{path}: kept {n_kept} stories, dropped {n_dup} duplicates "
+              f"and {n_foreign} with Latin letters or markup")
     return stories
 
 
