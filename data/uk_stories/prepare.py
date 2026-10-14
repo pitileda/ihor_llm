@@ -8,7 +8,7 @@ Prepare synthetic Ukrainian stories for nanoGPT.
   5. write train.bin / val.bin (uint16) and meta.pkl into this folder
 
 Usage:
-    python prepare.py --inputs ../../datagen/stories/luna_*.jsonl --vocab_size 8192
+    python prepare.py --inputs ../../datagen/synthetic/stories/luna_*.jsonl --vocab_size 8192
     python prepare.py --inputs ... --tokenizer ../../tokenizer/uk_bpe16384.model   # reuse a tokenizer
 
 nanoGPT reads data/<dataset>/ relative to its own folder, so this folder is symlinked

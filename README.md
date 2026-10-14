@@ -54,8 +54,8 @@ OPENAI_API_KEY=...
 |---|---|
 | `nanoGPT/` | submodule: `model.py`, `train.py` |
 | `tokenizer/train_tokenizer.py` | SentencePiece BPE trainer (`clean()`, `train_bpe()`); standalone run trains on a Ukrainian Wikipedia sample |
-| `datagen/generate_stories.py` | synthetic story generator (Claude / OpenAI, direct or batch API) → `datagen/stories/*.jsonl` |
-| `datagen/story_prompts.json` | prompt data: system prompt, genres, audiences, features, seed word lists (edit to change topics) |
+| `datagen/synthetic/generate_stories.py` | synthetic story generator (Claude / OpenAI, direct or batch API) → `datagen/synthetic/stories/*.jsonl` |
+| `datagen/synthetic/story_prompts.json` | prompt data: system prompt, genres, audiences, features, seed word lists (edit to change topics) |
 | `data/uk_stories/prepare.py` | stories → tokenizer → `train.bin`, `val.bin`, `meta.pkl` |
 | `config/train_uk_stories.py` | nanoGPT training config |
 | `sample_uk.py` | generate text from a checkpoint with the matching tokenizer |
@@ -66,13 +66,13 @@ OPENAI_API_KEY=...
 set -a; source .env; set +a
 
 # 1. generate stories (OpenAI Batch API, 50% cheaper; resumable via a state file)
-cd datagen
+cd datagen/synthetic
 python generate_stories.py --backend openai-batch --model gpt-6-luna --json \
     --n_requests 100000 --out stories/luna_v1.jsonl
 
 # 2. tokenizer + binary dataset
-cd ../data/uk_stories
-python prepare.py --inputs ../../datagen/stories/luna_*.jsonl --vocab_size 8192
+cd ../../data/uk_stories
+python prepare.py --inputs ../../datagen/synthetic/stories/luna_*.jsonl --vocab_size 8192
 
 # 3. train (set max_iters ≈ epochs * train_tokens / 65536 in the config)
 cd ../../nanoGPT

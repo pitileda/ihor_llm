@@ -1,7 +1,7 @@
 .env
 .venv/
 tokenizer/uk_wiki_sample.txt
-datagen/stories/
+datagen/synthetic/stories/
 __pycache__/
 data/*/*.bin
 data/*/meta.pkl
