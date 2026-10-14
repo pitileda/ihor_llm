@@ -1,10 +1,10 @@
 {
   "name": "uk_en_s",
-  "about": "model S: ~1B tokens, 60% Ukrainian / 40% English incl. 2% en-uk translation pairs",
+  "about": "model S: ~1B tokens, 60% Ukrainian / 40% English incl. 1.6% en-uk translation pairs (all OPUS has after filtering)",
   "total_tokens": 1000000000,
   "val_fraction": 0.005,
   "tokenizer": {"name": "uk_en_bpe32768", "vocab_size": 32768, "sample_chars": 1500000000},
-  "chars_per_token": {"uk": 4.3, "en": 4.5, "en-uk": 4.0},
+  "chars_per_token": {"uk": 3.5, "en": 3.8, "en-uk": 3.0},
   "filters": {
     "min_chars": 200,
     "max_chars": 100000,
@@ -13,14 +13,14 @@
     "max_russian_ratio": 0.002
   },
   "sources": {
-    "wikipedia_uk":     {"weight": 0.34},
-    "finepdfs_uk":      {"weight": 0.14, "min_edu_score": 2.0},
+    "wikipedia_uk":     {"weight": 0.349},
+    "finepdfs_uk":      {"weight": 0.139, "min_edu_score": 2.0},
     "kobza":            {"weight": 0.10, "max_files": 12},
-    "wikisource_uk":    {"weight": 0.01},
+    "wikisource_uk":    {"weight": 0.006},
     "fineweb_edu":      {"weight": 0.25},
     "wikipedia_en":     {"weight": 0.09},
     "wikipedia_simple": {"weight": 0.04},
     "wikisource_en":    {"weight": 0.01},
-    "opus100_en_uk":    {"weight": 0.02}
+    "opus100_en_uk":    {"weight": 0.016}
   }
 }

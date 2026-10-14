@@ -31,6 +31,22 @@ def clean(text: str) -> str:
     return text
 
 
+# SentencePiece marks a word start with "▁" (the space before it). A word right after
+# "\n" has no space, so "\nВона" becomes "В" + "она" instead of the usual "▁Вона".
+# Encoding "\n Вона" and dropping that space again on decode fixes it.
+LINE_START = re.compile(r"\n(?=[^\n])")
+
+
+def mark_line_starts(text: str) -> str:
+    """Before encoding: a space after every newline that starts a non-empty line."""
+    return LINE_START.sub("\n ", text)
+
+
+def unmark_line_starts(text: str) -> str:
+    """After decoding: undo mark_line_starts."""
+    return text.replace("\n ", "\n")
+
+
 def dump_sample(path: str, sample_mb: int) -> None:
     """Stream Ukrainian Wikipedia and write ~sample_mb MB of paragraphs, one per line."""
     if os.path.exists(path):

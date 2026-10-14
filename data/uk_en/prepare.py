@@ -6,7 +6,8 @@ Stages (each one skips work whose output already exists, unless --force):
              -> <work_dir>/<mix>/docs/<source>.jsonl (+ .stats.json written when complete)
   tokenizer  train a SentencePiece BPE on a sample weighted like the mix
              -> tokenizer/<tokenizer name>.model
-  encode     tokenize every source, eos after each document, split train/val by document
+  encode     tokenize every source (mark_line_starts first), eos after each document,
+             split train/val by document
              -> <work_dir>/<mix>/tokens/<source>.{train,val}.bin
   compose    take each source's share of total_tokens into one train.bin, plus val.bin
              and per-source val/<source>.bin, and meta.pkl -> this folder
@@ -30,6 +31,7 @@ sys.path.insert(0, os.path.join(ROOT, "datagen", "real"))
 sys.path.insert(0, os.path.join(ROOT, "tokenizer"))
 from corpus import Filters, doc_hash, estimate_size, iter_documents  # noqa: E402
 from download import load_sources  # noqa: E402
+from train_tokenizer import mark_line_starts  # noqa: E402
 
 STAGES = ["extract", "tokenizer", "encode", "compose"]
 EXTRACT_MARGIN = 1.15  # extract a bit more than the budget; compose trims to the exact share
@@ -75,7 +77,8 @@ def extract(mix, sources, names, raw_dir, work, seed, force):
                                              if "min_edu_score" in cfg else {}))
         budget_chars = (target_tokens(mix, name) * (1 + mix["val_fraction"])
                         * mix["chars_per_token"][src["lang"]] * EXTRACT_MARGIN)
-        rows, est_chars = estimate_size(raw_dir, name, src, seed, cfg.get("max_files", 0))
+        rows, est_chars = estimate_size(raw_dir, name, src, seed, cfg.get("max_files", 0),
+                                        filters.min_edu_score)
         keep = min(1.0, 1.3 * budget_chars / max(est_chars, 1))  # 1.3: room for filtered rows
         print(f"extract {name}: ~{est_chars / 1e9:.2f}B raw chars in {rows:,} rows, "
               f"budget {budget_chars / 1e9:.2f}B chars -> keep {keep:.2%} of rows")
@@ -138,7 +141,8 @@ def encode(mix, names, work, force):
             batch = []
 
             def flush():
-                for text, ids in zip(batch, sp.encode(batch, num_threads=os.cpu_count())):
+                ids_batch = sp.encode([mark_line_starts(t) for t in batch], num_threads=os.cpu_count())
+                for text, ids in zip(batch, ids_batch):
                     arr = np.array(ids + [eos], dtype=np.uint16)
                     split = "val" if is_val(text, mix["val_fraction"]) else "train"
                     (fval if split == "val" else ftrain).write(arr.tobytes())
@@ -195,6 +199,7 @@ def compose(mix, sources, names, work):
     with open(os.path.join(HERE, "meta.pkl"), "wb") as f:
         pickle.dump({"vocab_size": sp.get_piece_size(), "tokenizer": "sentencepiece",
                      "model_file": model_file, "eos_id": sp.eos_id(), "mix": mix["name"],
+                     "line_start_space": True,  # decode with unmark_line_starts
                      "sources": report}, f)
 
 

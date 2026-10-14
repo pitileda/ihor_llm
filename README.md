@@ -70,14 +70,22 @@ python download.py --out_dir /path/to/raw --list   # sources and sizes
 python download.py --out_dir /path/to/raw
 
 # 2. extract + clean -> tokenizer -> encode -> compose (mix in data/uk_en/mix.json)
+#    ~1.5 h on 24 cores; intermediate files go to <raw_dir>/work (~10 GB)
 cd ../../data/uk_en
 python prepare.py --raw_dir /path/to/raw
 
-# 3. train model S (~42M params, ~1B tokens)
+# 3. train model S (~42M params, 1B tokens; ~2 s/iter, ~4.5 h on an RTX A2000 6 GB)
 ln -sfn ../../data/uk_en ../../nanoGPT/data/uk_en
 cd ../../nanoGPT
 python train.py ../config/train_uk_en_s.py
+
+# 4. sample (prompt continuation; the model is a base model, not a chatbot)
+cd ..
+python sample_uk.py --out_dir nanoGPT/out-uk-en-s --start "Тарас Шевченко народився"
 ```
+
+Resulting mix (999.9M train tokens): Ukrainian 59.4%, English 39.0%, en-uk translation
+pairs 1.6%. Measured tokenizer efficiency: ~3.5 chars/token for Ukrainian, 3.5–4.0 for English.
 
 | Path | What |
 |---|---|

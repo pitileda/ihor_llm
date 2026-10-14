@@ -23,6 +23,9 @@ NANOGPT = os.path.join(HERE, "nanoGPT")
 sys.path.insert(0, NANOGPT)
 from model import GPT, GPTConfig  # noqa: E402
 
+sys.path.insert(0, os.path.join(HERE, "tokenizer"))
+from train_tokenizer import mark_line_starts, unmark_line_starts  # noqa: E402
+
 
 def load_model(out_dir, device):
     checkpoint = torch.load(os.path.join(out_dir, "ckpt.pt"), map_location=device)
@@ -69,9 +72,12 @@ def main():
         meta = pickle.load(f)
     sp = spm.SentencePieceProcessor(model_file=meta["model_file"])
     eos = meta["eos_id"]
+    # datasets encoded with mark_line_starts (data/uk_en) need the same on both ends
+    line_starts = meta.get("line_start_space", False)
+    to_text = unmark_line_starts if line_starts else (lambda t: t)
 
     # training data is "...story</s>story</s>...", so </s> is the natural "start of a new story"
-    start_ids = [eos] + sp.encode(args.start)
+    start_ids = [eos] + sp.encode(mark_line_starts(args.start) if line_starts else args.start)
     x = torch.tensor(start_ids, dtype=torch.long, device=args.device)[None, ...]
 
     ctx = nullcontext()
@@ -84,7 +90,7 @@ def main():
     with ctx:
         for _ in range(args.num_samples):
             y = generate(model, x, args.max_new_tokens, args.temperature, args.top_k, eos)
-            print(sp.decode(y[0, 1:].tolist()))
+            print(to_text(sp.decode(y[0, 1:].tolist())))
             print("---------------")
 
 

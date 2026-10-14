@@ -34,6 +34,8 @@ UKRAINIAN_ONLY = re.compile(r"[іїєґІЇЄҐ']")
 LETTER = re.compile(r"[^\W\d_]")
 HYPHEN_BREAK = re.compile(r"(\w)-\n(\w)")         # "сло-\nво" from PDF line wrapping
 PAGE_NUMBER_LINE = re.compile(r"^\s*\d{1,4}\s*$", re.M)
+EMPTY_TABLE_LINE = re.compile(r"^[ \t|:-]*\|[ \t|:-]*$", re.M)  # "| | |", "|---|---|"
+STRESS_MARK = "\u0301"  # combining acute: Wikipedia stress marks "Украї́ни"; NFC keeps é etc. precomposed
 TRAILING_SPACE = re.compile(r"[ \t]+\n")
 MANY_NEWLINES = re.compile(r"\n{3,}")
 MANY_SPACES = re.compile(r"[ \t]{2,}")
@@ -51,10 +53,11 @@ class Filters:
 
 def clean_text(text: str, pdf: bool = False) -> str:
     text = unicodedata.normalize("NFC", text.replace("\r\n", "\n").replace("\r", "\n"))
-    text = normalize_chars(text)
+    text = normalize_chars(text).replace(STRESS_MARK, "")
     if pdf:
         text = HYPHEN_BREAK.sub(r"\1\2", text)
         text = PAGE_NUMBER_LINE.sub("", text)
+        text = EMPTY_TABLE_LINE.sub("", text)
     text = TRAILING_SPACE.sub("\n", text)
     text = MANY_SPACES.sub(" ", text)
     return MANY_NEWLINES.sub("\n\n", text).strip()
@@ -171,8 +174,13 @@ def source_units(files: list) -> list:
 
 
 def estimate_size(raw_dir: str, name: str, src: dict, seed: int, max_files: int = 0,
-                  probe_rows: int = 2000) -> tuple:
-    """(rows, approximate raw chars) of a source, from parquet metadata and a sample."""
+                  min_edu_score: float = 0.0, probe_units: int = 8, probe_rows: int = 500) -> tuple:
+    """(rows, approximate raw chars) of a source, from parquet metadata and a sample.
+
+    The sample is the first probe_rows of probe_units random row groups: the first rows
+    of a file alone are not typical (Wikipedia files start with long, popular articles).
+    For the pdf reader only rows that pass min_edu_score count, so the sampling rate
+    is sized for what survives that filter."""
     reader = src["reader"]
     files = source_files(raw_dir, name, reader)
     if not files:
@@ -182,12 +190,21 @@ def estimate_size(raw_dir: str, name: str, src: dict, seed: int, max_files: int 
         files = files[:max_files]
     rows = sum(pq.ParquetFile(f).metadata.num_rows for f in files)
     column = "translation" if reader == "pairs" else "text"
-    batch = next(pq.ParquetFile(files[0]).iter_batches(batch_size=probe_rows, columns=[column]))
-    values = batch.column(0).to_pylist()
-    if reader == "pairs":
-        lengths = [len(v.get("en") or "") + len(v.get("uk") or "") + 9 for v in values]
-    else:
-        lengths = [len(v or "") for v in values]
+    columns = [column, "fw_edu_scores"] if reader == "pdf" else [column]
+    units = source_units(files)
+    lengths = []
+    for path, rg, _ in random.Random(f"{seed}:{name}:probe").sample(units, min(probe_units, len(units))):
+        batch = next(pq.ParquetFile(path).iter_batches(batch_size=probe_rows, row_groups=[rg],
+                                                       columns=columns))
+        values = batch.column(0).to_pylist()
+        if reader == "pairs":
+            sizes = [len(v.get("en") or "") + len(v.get("uk") or "") + 9 for v in values]
+        else:
+            sizes = [len(v or "") for v in values]
+        if reader == "pdf":
+            edu = [sum(s) / len(s) if s else 0.0 for s in batch.column(1).to_pylist()]
+            sizes = [n if e >= min_edu_score else 0 for n, e in zip(sizes, edu)]
+        lengths += sizes
     return rows, rows * sum(lengths) / max(len(lengths), 1)
 
 
