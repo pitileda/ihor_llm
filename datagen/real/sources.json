@@ -1,0 +1,56 @@
+{
+  "kobza": {
+    "repo": "Goader/kobza",
+    "include": ["*.parquet"],
+    "lang": "uk",
+    "about": "60B-token deduplicated Ukrainian web corpus: CulturaX, FineWeb-2, HPLT 2.0, UberText 2.0, news (CC0)"
+  },
+  "wikipedia_uk": {
+    "repo": "wikimedia/wikipedia",
+    "include": ["20231101.uk/*.parquet"],
+    "lang": "uk",
+    "about": "Ukrainian Wikipedia: facts, people, places, history"
+  },
+  "wikisource_uk": {
+    "repo": "wikimedia/wikisource",
+    "include": ["20231201.uk/*.parquet"],
+    "lang": "uk",
+    "about": "Ukrainian Wikisource: public-domain classic literature and documents"
+  },
+  "finepdfs_uk": {
+    "repo": "HuggingFaceFW/finepdfs",
+    "include": ["data/ukr_Cyrl/*.parquet"],
+    "lang": "uk",
+    "about": "text extracted from Ukrainian PDFs: textbooks, manuals, papers"
+  },
+  "wikipedia_en": {
+    "repo": "wikimedia/wikipedia",
+    "include": ["20231101.en/*.parquet"],
+    "lang": "en",
+    "about": "English Wikipedia"
+  },
+  "wikipedia_simple": {
+    "repo": "wikimedia/wikipedia",
+    "include": ["20231101.simple/*.parquet"],
+    "lang": "en",
+    "about": "Simple English Wikipedia: basic facts in plain language"
+  },
+  "wikisource_en": {
+    "repo": "wikimedia/wikisource",
+    "include": ["20231201.en/*.parquet"],
+    "lang": "en",
+    "about": "English Wikisource: public-domain literature and documents"
+  },
+  "fineweb_edu": {
+    "repo": "HuggingFaceFW/fineweb-edu",
+    "include": ["sample/10BT/*.parquet"],
+    "lang": "en",
+    "about": "10B-token sample of educational English web pages"
+  },
+  "opus100_en_uk": {
+    "repo": "Helsinki-NLP/opus-100",
+    "include": ["en-uk/*.parquet"],
+    "lang": "en-uk",
+    "about": "1M English-Ukrainian translation pairs"
+  }
+}

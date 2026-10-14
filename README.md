@@ -56,11 +56,20 @@ OPENAI_API_KEY=...
 | `tokenizer/train_tokenizer.py` | SentencePiece BPE trainer (`clean()`, `train_bpe()`); standalone run trains on a Ukrainian Wikipedia sample |
 | `datagen/synthetic/generate_stories.py` | synthetic story generator (Claude / OpenAI, direct or batch API) → `datagen/synthetic/stories/*.jsonl` |
 | `datagen/synthetic/story_prompts.json` | prompt data: system prompt, genres, audiences, features, seed word lists (edit to change topics) |
+| `datagen/real/download.py` | downloads the real corpora listed in `datagen/real/sources.json` (Kobza, Wikipedia, Wikisource, FinePDFs, FineWeb-Edu, OPUS) from the Hugging Face Hub, pinned and resumable |
 | `data/uk_stories/prepare.py` | stories → tokenizer → `train.bin`, `val.bin`, `meta.pkl` |
 | `config/train_uk_stories.py` | nanoGPT training config |
 | `sample_uk.py` | generate text from a checkpoint with the matching tokenizer |
 
-## Pipeline
+## Real data (bilingual uk/en, work in progress)
+
+```bash
+cd datagen/real
+python download.py --out_dir /path/to/raw --list   # sources and sizes (~262 GB)
+python download.py --out_dir /path/to/raw          # download (resumable), writes manifest.json
+```
+
+## Synthetic stories pipeline
 
 ```bash
 set -a; source .env; set +a
