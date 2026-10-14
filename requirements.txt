@@ -4,3 +4,4 @@ sentencepiece>=0.2
 datasets      # tokenizer/train_tokenizer.py (Wikipedia sample)
 anthropic     # datagen: Claude backends
 requests      # datagen: OpenAI backends
+lingua-language-detector  # datagen/real: language ID for OPUS pairs

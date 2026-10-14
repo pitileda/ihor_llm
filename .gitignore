@@ -13,3 +13,6 @@ tokenizer/*.vocab
 
 # run logs anywhere in the repo
 *.log
+
+# per-source validation sets written by data/uk_en/prepare.py
+data/*/val/

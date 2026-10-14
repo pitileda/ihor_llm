@@ -23,7 +23,7 @@ from huggingface_hub import HfApi, snapshot_download
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SOURCES = os.path.join(HERE, "sources.json")
-REQUIRED_KEYS = {"repo", "include", "lang", "about"}
+REQUIRED_KEYS = {"repo", "include", "lang", "reader", "about"}
 
 
 def load_sources(path: str) -> dict:

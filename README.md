@@ -61,13 +61,30 @@ OPENAI_API_KEY=...
 | `config/train_uk_stories.py` | nanoGPT training config |
 | `sample_uk.py` | generate text from a checkpoint with the matching tokenizer |
 
-## Real data (bilingual uk/en, work in progress)
+## Real data: bilingual uk/en base model
 
 ```bash
+# 1. download raw corpora (~262 GB, resumable, writes manifest.json)
 cd datagen/real
-python download.py --out_dir /path/to/raw --list   # sources and sizes (~262 GB)
-python download.py --out_dir /path/to/raw          # download (resumable), writes manifest.json
+python download.py --out_dir /path/to/raw --list   # sources and sizes
+python download.py --out_dir /path/to/raw
+
+# 2. extract + clean -> tokenizer -> encode -> compose (mix in data/uk_en/mix.json)
+cd ../../data/uk_en
+python prepare.py --raw_dir /path/to/raw
+
+# 3. train model S (~42M params, ~1B tokens)
+ln -sfn ../../data/uk_en ../../nanoGPT/data/uk_en
+cd ../../nanoGPT
+python train.py ../config/train_uk_en_s.py
 ```
+
+| Path | What |
+|---|---|
+| `datagen/real/sources.json` | where each corpus comes from and which reader parses it |
+| `datagen/real/corpus.py` | readers, cleaning, quality and language filters |
+| `data/uk_en/mix.json` | the recipe: total tokens, share per source, filters, tokenizer |
+| `data/uk_en/prepare.py` | builds `train.bin`, `val.bin`, `val/<source>.bin`, `meta.pkl` |
 
 ## Synthetic stories pipeline
 
